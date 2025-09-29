@@ -19,10 +19,10 @@ public class RefreshToken {
     private String token;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
+    @JoinColumn(name = "id_usuario", nullable = false)
     private SystemUser user;
 
-    @Column(nullable = false)
+    @Column(name = "fecha_expiracion", nullable = false)
     private Instant expiryDate;
 }
 
