@@ -14,6 +14,10 @@ public class UserPrincipal implements UserDetails {
 
     private final SystemUser user;
 
+    public static UserPrincipal build(SystemUser user) {
+        return new UserPrincipal(user);
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return Collections.singletonList(

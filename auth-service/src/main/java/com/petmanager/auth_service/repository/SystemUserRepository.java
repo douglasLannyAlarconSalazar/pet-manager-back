@@ -18,4 +18,7 @@ public interface SystemUserRepository extends JpaRepository<SystemUser, Integer>
     boolean existsByUsername(String username);
 
     boolean existsByEmail(String email);
+
+    @Query("SELECT u FROM SystemUser u JOIN FETCH u.role WHERE u.username = :username OR u.email = :email")
+    Optional<SystemUser> findByUsernameOrEmailWithRole(@Param("username") String username, @Param("email") String email);
 }
