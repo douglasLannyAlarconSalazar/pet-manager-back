@@ -16,6 +16,10 @@ public class JwtAuthenticationEntryPoint implements AuthenticationEntryPoint {
     public void commence(HttpServletRequest request,
                         HttpServletResponse response,
                         AuthenticationException authException) throws IOException, ServletException {
+        System.err.println("Authentication failed: " + authException.getMessage());
+        System.err.println("Request URI: " + request.getRequestURI());
+        System.err.println("Authorization header: " + (request.getHeader("Authorization") != null ? "Present" : "Missing"));
+
         response.setContentType("application/json");
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.getWriter().write("{\"error\": \"Unauthorized\", \"message\": \"Valid JWT token required\"}");

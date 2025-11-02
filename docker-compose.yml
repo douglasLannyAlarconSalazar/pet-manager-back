@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (if you want to run it in Docker)
+  postgres:
+    image: postgres:16-alpine
+    container_name: pet-manager-db
+    environment:
+      POSTGRES_DB: petmanager
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pet-manager-network
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: pet-manager-auth
+    environment:
+      # Database Configuration
+      DB_URL: jdbc:postgresql://postgres:5432/petmanager
+      DB_USERNAME: postgres
+      DB_PASSWORD: password
+
+      # JWT Configuration - Use your static keys
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+      JWT_EXPIRATION: 3600000
+      JWT_REFRESH_EXPIRATION: 86400000
+
+      # Server Configuration
+      SERVER_PORT: 8080
+
+      # Admin Configuration
+      ADMIN_USERNAME: admin
+      ADMIN_EMAIL: admin@petmanager.com
+      ADMIN_PASSWORD: Admin@123
+      ADMIN_ROLE: ADMIN
+
+      # Spring Boot Configuration
+      SPRING_PROFILES_ACTIVE: prod
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pet-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Gestion Cliente Service
+  gestion-cliente:
+    build:
+      context: ./gestion-cliente
+      dockerfile: Dockerfile
+    container_name: pet-manager-cliente
+    environment:
+      # Database Configuration (using Neon or local postgres)
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://postgres:5432/petmanager}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-password}
+
+      # Auth Service Configuration
+      AUTH_SERVICE_PUBLIC_KEY_URL: http://auth-service:8080/auth/public-key
+
+      # Server Configuration
+      SERVER_PORT: 8081
+
+      # Spring Boot Configuration
+      SPRING_PROFILES_ACTIVE: prod
+    ports:
+      - "8081:8081"
+    depends_on:
+      auth-service:
+        condition: service_healthy
+    networks:
+      - pet-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  pet-manager-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+
