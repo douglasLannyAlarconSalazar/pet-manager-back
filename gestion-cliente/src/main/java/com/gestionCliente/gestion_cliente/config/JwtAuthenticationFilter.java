@@ -6,10 +6,15 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.lang.NonNull;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Collections;
 
 @Component
 @RequiredArgsConstructor
@@ -35,15 +40,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             final String jwt = authHeader.substring(7);
 
             if (jwtVerificationService.isTokenValid(jwt)) {
-                // Token is valid, extract username and store in request attribute
+                // Token is valid, extract username
                 String username = jwtVerificationService.extractUsername(jwt);
-                request.setAttribute("username", username);
-                request.setAttribute("authenticated", true);
-            } else {
-                request.setAttribute("authenticated", false);
+
+                // Create authentication token with a default authority
+                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                        username,
+                        null,
+                        Collections.singletonList(new SimpleGrantedAuthority("USER"))
+                );
+
+                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+                // Set the authentication in the SecurityContext
+                SecurityContextHolder.getContext().setAuthentication(authToken);
+
+                System.out.println("Successfully authenticated user: " + username);
             }
         } catch (Exception e) {
-            request.setAttribute("authenticated", false);
+            System.err.println("JWT validation failed: " + e.getMessage());
+            SecurityContextHolder.clearContext();
         }
 
         filterChain.doFilter(request, response);

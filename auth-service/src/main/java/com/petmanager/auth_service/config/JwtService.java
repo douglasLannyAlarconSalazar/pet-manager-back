@@ -37,8 +37,11 @@ public class JwtService {
 
     @PostConstruct
     public void init() throws Exception {
-        // If keys are not provided, generate them
-        if (privateKeyString.isEmpty() || publicKeyString.isEmpty()) {
+        // Check if keys are provided and not empty
+        if (privateKeyString == null || privateKeyString.trim().isEmpty() ||
+            publicKeyString == null || publicKeyString.trim().isEmpty()) {
+            System.out.println("WARNING: JWT keys not provided. Generating temporary keys...");
+            System.out.println("For production, set JWT_PRIVATE_KEY and JWT_PUBLIC_KEY environment variables!");
             generateKeyPair();
         } else {
             loadKeys();
@@ -53,27 +56,51 @@ public class JwtService {
         this.publicKey = keyPair.getPublic();
 
         System.out.println("Generated RSA key pair for JWT signing");
-        System.out.println("Public Key: " + Base64.getEncoder().encodeToString(publicKey.getEncoded()));
+        System.out.println("Public Key (base64): " + Base64.getEncoder().encodeToString(publicKey.getEncoded()));
     }
 
     private void loadKeys() throws Exception {
-        // Remove header, footer, and whitespace from PEM format
-        String privateKeyPEM = privateKeyString
-                .replace("-----BEGIN PRIVATE KEY-----", "")
-                .replace("-----END PRIVATE KEY-----", "")
-                .replaceAll("\\s", "");
+        System.out.println("Loading static keys from configuration...");
 
-        String publicKeyPEM = publicKeyString
-                .replace("-----BEGIN PUBLIC KEY-----", "")
-                .replace("-----END PUBLIC KEY-----", "")
-                .replaceAll("\\s", "");
+        try {
+            // Sanitize the private key
+            // Handle both escaped (\n) and actual newlines, remove PEM headers
+            String privateKeyPEM = sanitizePemKey(privateKeyString);
+            String publicKeyPEM = sanitizePemKey(publicKeyString);
 
-        byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyPEM);
-        byte[] publicKeyBytes = Base64.getDecoder().decode(publicKeyPEM);
+            // Decode from Base64
+            byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyPEM);
+            byte[] publicKeyBytes = Base64.getDecoder().decode(publicKeyPEM);
 
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        this.privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(privateKeyBytes));
-        this.publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(publicKeyBytes));
+            // Generate keys
+            KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+            this.privateKey = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(privateKeyBytes));
+            this.publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(publicKeyBytes));
+
+            System.out.println("Successfully loaded static RSA keys");
+        } catch (Exception e) {
+            System.err.println("ERROR: Failed to load JWT keys: " + e.getMessage());
+            System.err.println("Private key length: " + privateKeyString.length());
+            System.err.println("Public key length: " + publicKeyString.length());
+            throw new RuntimeException("Failed to load JWT keys. Ensure they are in proper PEM format.", e);
+        }
+    }
+
+    private String sanitizePemKey(String pemKey) {
+        return pemKey
+                // Remove PEM headers and footers
+                .replaceAll("-----BEGIN [A-Z ]+-----", "")
+                .replaceAll("-----END [A-Z ]+-----", "")
+                // Remove escaped newlines (from properties files)
+                .replace("\\n", "")
+                // Remove actual newlines (from multiline env vars)
+                .replace("\n", "")
+                .replace("\r", "")
+                // Remove escaped equals signs
+                .replace("\\=", "=")
+                // Remove all whitespace
+                .replaceAll("\\s+", "")
+                .trim();
     }
 
     public String getPublicKeyAsString() {
