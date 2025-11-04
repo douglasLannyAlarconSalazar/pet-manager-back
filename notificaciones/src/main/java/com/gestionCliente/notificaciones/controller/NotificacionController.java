@@ -15,15 +15,15 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/notificaciones")
-@Tag(name = "Notificaciones", description = "API para gestión de notificaciones de promociones")
+@Tag(name = "Notificaciones", description = "API para gestión de notificaciones (envíos que referencian promociones)")
 public class NotificacionController {
     
     @Autowired
     private NotificacionService notificacionService;
     
     @PostMapping("/email")
-    @Operation(summary = "Enviar promoción por email", 
-               description = "Envía una notificación de promoción por correo electrónico")
+    @Operation(summary = "Enviar notificación por email", 
+               description = "Envía una notificación por correo electrónico asociada a una promoción existente")
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Email enviado exitosamente"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Datos de entrada inválidos"),
@@ -37,8 +37,8 @@ public class NotificacionController {
     }
     
     @PostMapping("/sms")
-    @Operation(summary = "Enviar promoción por SMS", 
-               description = "Envía una notificación de promoción por mensaje de texto")
+    @Operation(summary = "Enviar notificación por SMS", 
+               description = "Envía una notificación por SMS asociada a una promoción existente")
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "SMS enviado exitosamente"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Datos de entrada inválidos"),
@@ -52,8 +52,8 @@ public class NotificacionController {
     }
     
     @PostMapping("/email-masivo")
-    @Operation(summary = "Envío masivo por email", 
-               description = "Envía notificaciones de promoción por email a múltiples clientes")
+    @Operation(summary = "Envío masivo de notificaciones por email", 
+               description = "Envía notificaciones por email a múltiples clientes asociadas a una promoción existente")
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Emails masivos enviados exitosamente"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Datos de entrada inválidos"),
@@ -67,8 +67,8 @@ public class NotificacionController {
     }
     
     @PostMapping("/personalizada")
-    @Operation(summary = "Promoción personalizada", 
-               description = "Envía una promoción personalizada basada en el historial de compras del cliente")
+    @Operation(summary = "Notificación personalizada", 
+               description = "Envía una notificación personalizada (canal configurable) asociada a una promoción existente")
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Promoción personalizada enviada exitosamente"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Datos de entrada inválidos"),
@@ -83,7 +83,7 @@ public class NotificacionController {
     
     @GetMapping
     @Operation(summary = "Obtener todas las notificaciones", 
-               description = "Retorna todas las notificaciones del sistema")
+               description = "Retorna todas las notificaciones enviadas/registradas en el sistema")
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Notificaciones obtenidas exitosamente"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Error interno del servidor")
@@ -110,7 +110,7 @@ public class NotificacionController {
     
     @GetMapping("/promocion/{idPromocion}")
     @Operation(summary = "Obtener notificaciones por promoción", 
-               description = "Retorna todas las notificaciones de una promoción específica")
+               description = "Retorna todas las notificaciones asociadas a una promoción específica")
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Notificaciones de la promoción obtenidas exitosamente"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Error interno del servidor")
