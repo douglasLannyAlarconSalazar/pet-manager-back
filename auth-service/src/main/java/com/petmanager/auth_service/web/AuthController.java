@@ -4,6 +4,12 @@ import com.petmanager.auth_service.config.JwtService;
 import com.petmanager.auth_service.web.dto.AuthRequest;
 import com.petmanager.auth_service.web.dto.AuthResponse;
 import com.petmanager.auth_service.web.dto.RefreshRequest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -19,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
+@Tag(name = "Authentication", description = "Authentication endpoints for login and token refresh")
 public class AuthController {
 
     private final AuthenticationManager authenticationManager;
@@ -26,6 +33,27 @@ public class AuthController {
     private final UserDetailsService userDetailsService;
 
     @PostMapping("/login")
+    @Operation(
+            summary = "User login",
+            description = "Authenticate user with username/email and password. Returns JWT access token and refresh token."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Login successful",
+                    content = @Content(schema = @Schema(implementation = AuthResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "Invalid credentials",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Bad request",
+                    content = @Content
+            )
+    })
     public ResponseEntity<AuthResponse> login(@RequestBody AuthRequest request) {
         Authentication auth = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getUsernameOrEmail(), request.getPassword())
@@ -43,6 +71,22 @@ public class AuthController {
     }
 
     @PostMapping("/refresh")
+    @Operation(
+            summary = "Refresh access token",
+            description = "Generate a new access token using a valid refresh token. The refresh token remains the same."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Token refreshed successfully",
+                    content = @Content(schema = @Schema(implementation = AuthResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "Invalid or expired refresh token",
+                    content = @Content
+            )
+    })
     public ResponseEntity<AuthResponse> refresh(@RequestBody RefreshRequest request) {
         try {
             String refreshToken = request.getRefreshToken();
