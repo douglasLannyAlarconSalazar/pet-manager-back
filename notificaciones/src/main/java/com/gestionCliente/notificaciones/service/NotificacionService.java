@@ -171,7 +171,10 @@ public class NotificacionService {
     
     /**
      * Envía notificaciones masivas por email
+     * Nota: Las operaciones de envío de email se realizan fuera de la transacción principal
+     * para evitar timeouts de base de datos. Se actualizan en lotes pequeños.
      */
+    @Transactional
     public ApiResponse<String> enviarEmailMasivo(EmailMasivoRequest request) {
         try {
             // Validar que la promoción existe
@@ -190,9 +193,9 @@ public class NotificacionService {
             Usuario usuario = usuarioOpt.get();
             
             List<Notificacion> notificaciones = new ArrayList<>();
-            int enviados = 0;
             int fallidos = 0;
             
+            // Crear notificaciones
             for (Long idCliente : request.getIdClientes()) {
                 // Validar que el cliente existe
                 Optional<Cliente> clienteOpt = clienteRepository.findById(idCliente);
@@ -215,35 +218,117 @@ public class NotificacionService {
                 notificacion.setCliente(cliente);
                 notificacion.setPromocion(promocion);
                 notificacion.setUsuario(usuario);
+                notificacion.setEstadoEntrega(Notificacion.EstadoEntrega.PENDIENTE);
                 
                 notificaciones.add(notificacion);
             }
             
-            // Guardar notificaciones
+            // Guardar notificaciones y cerrar transacción rápidamente
+            List<Long> idsNotificaciones = new ArrayList<>();
             notificaciones = notificacionRepository.saveAll(notificaciones);
-            
-            // Enviar emails
-            for (Notificacion notificacion : notificaciones) {
-                boolean enviado = emailService.enviarEmail(notificacion);
-                
-                if (enviado) {
-                    notificacion.setEstadoEntrega(Notificacion.EstadoEntrega.ENVIADA);
-                    notificacion.setFechaEnvio(LocalDate.now());
-                    enviados++;
-                } else {
-                    notificacion.setEstadoEntrega(Notificacion.EstadoEntrega.FALLIDA);
-                    fallidos++;
-                }
+            for (Notificacion notif : notificaciones) {
+                idsNotificaciones.add(notif.getIdNotificacion());
             }
             
-            notificacionRepository.saveAll(notificaciones);
+            // Procesar emails fuera de la transacción principal
+            procesarEnvioEmailsEnLotes(idsNotificaciones);
             
-            String mensaje = String.format("Envío masivo completado. Enviados: %d, Fallidos: %d", enviados, fallidos);
+            String mensaje = String.format("Envío masivo iniciado. Notificaciones creadas: %d, Clientes no encontrados: %d. Los emails se están procesando.", 
+                                          notificaciones.size(), fallidos);
             return ApiResponse.success(mensaje);
             
         } catch (Exception e) {
-            logger.error("Error al enviar email masivo: {}", e.getMessage());
+            logger.error("Error al enviar email masivo: {}", e.getMessage(), e);
             return ApiResponse.error("Error al enviar email masivo: " + e.getMessage(), 500);
+        }
+    }
+    
+    /**
+     * Procesa el envío de emails en lotes pequeños para evitar timeouts
+     * Cada lote se procesa en una transacción separada
+     */
+    public void procesarEnvioEmailsEnLotes(List<Long> idsNotificaciones) {
+        int enviados = 0;
+        int fallidos = 0;
+        final int TAMANO_LOTE = 10; // Procesar 10 emails por lote
+        
+        for (int i = 0; i < idsNotificaciones.size(); i += TAMANO_LOTE) {
+            int fin = Math.min(i + TAMANO_LOTE, idsNotificaciones.size());
+            List<Long> lote = idsNotificaciones.subList(i, fin);
+            
+            try {
+                procesarLoteEmails(lote);
+                enviados += lote.size();
+            } catch (Exception e) {
+                logger.error("Error al procesar lote de emails: {}", e.getMessage());
+                fallidos += lote.size();
+            }
+        }
+        
+        logger.info("Procesamiento de emails completado. Enviados: {}, Fallidos: {}", enviados, fallidos);
+    }
+    
+    /**
+     * Procesa un lote de emails
+     * El envío de email se hace FUERA de la transacción, y luego se actualiza el estado en una transacción rápida
+     */
+    public void procesarLoteEmails(List<Long> idsNotificaciones) {
+        for (Long idNotificacion : idsNotificaciones) {
+            try {
+                // Primero enviar el email FUERA de cualquier transacción
+                boolean enviado = false;
+                Notificacion notificacionParaEnvio = null;
+                
+                try {
+                    notificacionParaEnvio = obtenerNotificacionParaEnvio(idNotificacion);
+                    if (notificacionParaEnvio != null) {
+                        enviado = emailService.enviarEmail(notificacionParaEnvio);
+                    }
+                } catch (Exception e) {
+                    logger.error("Error al enviar email para notificación {}: {}", 
+                               idNotificacion, e.getMessage());
+                }
+                
+                // Luego actualizar el estado en una transacción rápida y separada
+                actualizarEstadoNotificacion(idNotificacion, enviado);
+                
+            } catch (Exception e) {
+                logger.error("Error al procesar email para notificación {}: {}", 
+                           idNotificacion, e.getMessage());
+                actualizarEstadoNotificacion(idNotificacion, false);
+            }
+        }
+    }
+    
+    /**
+     * Obtiene una notificación para envío (sin transacción activa)
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW, readOnly = true)
+    public Notificacion obtenerNotificacionParaEnvio(Long idNotificacion) {
+        Optional<Notificacion> notificacionOpt = notificacionRepository.findById(idNotificacion);
+        return notificacionOpt.orElse(null);
+    }
+    
+    /**
+     * Actualiza el estado de una notificación en una transacción rápida
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void actualizarEstadoNotificacion(Long idNotificacion, boolean enviado) {
+        try {
+            Optional<Notificacion> notificacionOpt = notificacionRepository.findById(idNotificacion);
+            if (notificacionOpt.isPresent()) {
+                Notificacion notificacion = notificacionOpt.get();
+                if (enviado) {
+                    notificacion.setEstadoEntrega(Notificacion.EstadoEntrega.ENVIADA);
+                    notificacion.setFechaEnvio(LocalDate.now());
+                } else {
+                    notificacion.setEstadoEntrega(Notificacion.EstadoEntrega.FALLIDA);
+                }
+                notificacionRepository.save(notificacion);
+            }
+        } catch (Exception e) {
+            logger.error("Error al actualizar estado de notificación {}: {}", 
+                       idNotificacion, e.getMessage());
         }
     }
     
