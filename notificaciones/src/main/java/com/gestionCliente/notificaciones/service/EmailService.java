@@ -4,131 +4,103 @@ import com.gestionCliente.notificaciones.entity.Notificacion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.mail.MailException;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
+import java.util.HashMap;
+import java.util.Map;
 
+/**
+ * Servicio de envío de emails usando SendGrid API REST
+ * Usa API REST en lugar de SMTP para funcionar en plataformas cloud como Render
+ * que bloquean conexiones SMTP salientes
+ */
 @Service
 public class EmailService {
     
     private static final Logger logger = LoggerFactory.getLogger(EmailService.class);
     
     @Autowired
-    private JavaMailSender mailSender;
-    
-    @Autowired
     private org.springframework.core.env.Environment environment;
     
+    @Autowired
+    private WebClient.Builder webClientBuilder;
+    
     /**
-     * Envía un email de promoción
+     * Envía un email de promoción usando SendGrid API REST
      */
     public boolean enviarEmail(Notificacion notificacion) {
         try {
-            // Obtener configuración SMTP
-            String mailHost = environment.getProperty("spring.mail.host", "no configurado");
-            String mailPort = environment.getProperty("spring.mail.port", "no configurado");
-            String fromEmail = environment.getProperty("spring.mail.from");
+            // Obtener configuración de SendGrid API
+            String apiKey = environment.getProperty("SENDGRID_API_KEY");
+            String fromEmail = environment.getProperty("SENDGRID_FROM_EMAIL");
             
-            // Validar que el remitente esté configurado
-            if (fromEmail == null || fromEmail.isEmpty()) {
-                logger.error("❌ MAIL_FROM no está configurado. Por favor, configura la variable de entorno MAIL_FROM con el email verificado en SendGrid");
+            // Validar configuración
+            if (apiKey == null || apiKey.isEmpty()) {
+                logger.error("❌ ERROR: SENDGRID_API_KEY no está configurado. Por favor, configura la variable de entorno SENDGRID_API_KEY");
                 return false;
             }
             
-            // Log de configuración para diagnóstico
-            logger.info("📧 Enviando email - SMTP: {}:{}, From: {}", mailHost, mailPort, fromEmail);
+            if (fromEmail == null || fromEmail.isEmpty()) {
+                logger.error("❌ ERROR: SENDGRID_FROM_EMAIL no está configurado. Por favor, configura la variable de entorno SENDGRID_FROM_EMAIL con el email verificado en SendGrid");
+                return false;
+            }
             
-            SimpleMailMessage message = new SimpleMailMessage();
-            // Configurar remitente (debe ser un email verificado en SendGrid)
-            message.setFrom(fromEmail);
-            message.setTo(notificacion.getCliente().getEmail());
-            message.setSubject("🎉 " + notificacion.getPromocion().getNombre());
-            message.setText(construirMensajeEmail(notificacion));
+            // Construir el mensaje del email
+            String mensajeTexto = construirMensajeEmail(notificacion);
+            String asunto = "🎉 " + notificacion.getPromocion().getNombre();
+            String destinatario = notificacion.getCliente().getEmail();
             
-            mailSender.send(message);
+            logger.info("📧 Enviando email vía SendGrid API - To: {}, From: {}", destinatario, fromEmail);
             
-            logger.info("Email enviado exitosamente a: {}", notificacion.getCliente().getEmail());
+            // Construir el payload para SendGrid API
+            Map<String, Object> payload = new HashMap<>();
+            Map<String, String> fromMap = new HashMap<>();
+            fromMap.put("email", fromEmail);
+            payload.put("from", fromMap);
+            
+            Map<String, String> toMap = new HashMap<>();
+            toMap.put("email", destinatario);
+            payload.put("personalizations", new Object[]{
+                Map.of("to", new Object[]{toMap})
+            });
+            
+            payload.put("subject", asunto);
+            
+            Map<String, String> contentMap = new HashMap<>();
+            contentMap.put("type", "text/plain");
+            contentMap.put("value", mensajeTexto);
+            payload.put("content", new Object[]{contentMap});
+            
+            // Enviar usando WebClient (más confiable que el SDK de SendGrid)
+            WebClient webClient = webClientBuilder
+                .baseUrl("https://api.sendgrid.com")
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .build();
+            
+            // Enviar email - SendGrid retorna 202 Accepted cuando es exitoso
+            webClient.post()
+                .uri("/v3/mail/send")
+                .bodyValue(payload)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block(); // Bloquea porque necesitamos el resultado síncrono
+            
+            logger.info("✅ Email enviado exitosamente a: {}", destinatario);
             return true;
             
-        } catch (MailException e) {
-            // Verificar si es un timeout de conexión (esperado en algunos entornos)
-            return manejarErrorMail(e, notificacion.getCliente().getEmail());
-            
+        } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+            logger.error("❌ ERROR: SendGrid API retornó código de error {} al enviar email a {}. Respuesta: {}", 
+                       e.getStatusCode().value(), notificacion.getCliente().getEmail(), e.getResponseBodyAsString());
+            return false;
         } catch (Exception e) {
-            // Capturar cualquier otra excepción, incluyendo las que puedan envolver MailException
-            // Verificar si la causa es una MailException
-            Throwable cause = e.getCause();
-            if (cause instanceof MailException) {
-                return manejarErrorMail((MailException) cause, notificacion.getCliente().getEmail());
-            }
-            
-            // Verificar si el mensaje indica un error de mail
-            String errorMessage = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-            if (errorMessage.contains("mail") || errorMessage.contains("smtp") || 
-                errorMessage.contains("timeout") || errorMessage.contains("connect")) {
-                return manejarErrorMailGenerico(e, notificacion.getCliente().getEmail());
-            }
-            
-            logger.error("Error inesperado al enviar email a {}: {}", 
-                        notificacion.getCliente().getEmail(), e.getMessage());
+            logger.error("❌ ERROR: Error inesperado al enviar email a {}: {}", 
+                        notificacion.getCliente().getEmail(), e.getMessage(), e);
             return false;
         }
-    }
-    
-    /**
-     * Maneja errores de MailException
-     */
-    private boolean manejarErrorMail(MailException e, String email) {
-        Throwable cause = e.getCause();
-        String errorMessage = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-        String fullMessage = e.getMessage() != null ? e.getMessage() : "Error desconocido";
-        
-        boolean isTimeout = cause instanceof SocketTimeoutException || 
-                           cause instanceof ConnectException ||
-                           errorMessage.contains("timeout") ||
-                           errorMessage.contains("connect timed out") ||
-                           errorMessage.contains("couldn't connect to host") ||
-                           errorMessage.contains("mail server connection failed");
-        
-        if (isTimeout) {
-            // Timeouts son errores reales en producción
-            logger.error("❌ ERROR: Timeout de conexión SMTP al enviar email a {}. Verifica: 1) Variables de entorno (MAIL_HOST, MAIL_PORT), 2) Conectividad de red, 3) Configuración del servidor SMTP. Detalle: {}", 
-                       email, fullMessage);
-        } else if (errorMessage.contains("authentication failed") || errorMessage.contains("authentication")) {
-            logger.error("❌ ERROR: Fallo de autenticación SMTP al enviar email a {}. Verifica: 1) MAIL_USERNAME y MAIL_PASSWORD correctos, 2) API Key válida en SendGrid. Detalle: {}", 
-                       email, fullMessage);
-        } else if (errorMessage.contains("sender identity") || errorMessage.contains("verified sender")) {
-            logger.error("❌ ERROR: El remitente no está verificado en SendGrid. Email: {}. Verifica que MAIL_FROM coincida exactamente con un Sender Identity verificado en SendGrid. Detalle: {}", 
-                       email, fullMessage);
-        } else {
-            // Otros errores de mail se loguean como ERROR
-            logger.error("❌ ERROR: Error de conexión SMTP al enviar email a {}. Detalle: {}", email, fullMessage);
-        }
-        return false;
-    }
-    
-    /**
-     * Maneja errores genéricos que parecen ser de mail
-     */
-    private boolean manejarErrorMailGenerico(Exception e, String email) {
-        String errorMessage = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-        String fullMessage = e.getMessage() != null ? e.getMessage() : "Error desconocido";
-        
-        boolean isTimeout = errorMessage.contains("timeout") ||
-                           errorMessage.contains("connect timed out") ||
-                           errorMessage.contains("couldn't connect to host");
-        
-        if (isTimeout) {
-            logger.error("❌ ERROR: Timeout de conexión SMTP al enviar email a {}. Verifica la configuración SMTP y conectividad de red. Detalle: {}", 
-                       email, fullMessage);
-        } else {
-            logger.error("❌ ERROR: Error de conexión SMTP al enviar email a {}. Detalle: {}", email, fullMessage);
-        }
-        return false;
     }
     
     /**
@@ -170,46 +142,63 @@ public class EmailService {
     }
     
     /**
-     * Envía email masivo
+     * Envía email masivo usando SendGrid API REST
      */
     public int enviarEmailMasivo(String[] emails, String asunto, String mensaje) {
         int enviados = 0;
         
-        String fromEmail = environment.getProperty("spring.mail.from");
+        String apiKey = environment.getProperty("SENDGRID_API_KEY");
+        String fromEmail = environment.getProperty("SENDGRID_FROM_EMAIL");
         
-        if (fromEmail == null || fromEmail.isEmpty()) {
-            logger.error("❌ MAIL_FROM no está configurado. No se pueden enviar emails masivos.");
+        if (apiKey == null || apiKey.isEmpty() || fromEmail == null || fromEmail.isEmpty()) {
+            logger.error("❌ ERROR: SENDGRID_API_KEY o SENDGRID_FROM_EMAIL no están configurados. No se pueden enviar emails masivos.");
             return 0;
         }
         
+        // Configurar WebClient para SendGrid API
+        WebClient webClient = webClientBuilder
+            .baseUrl("https://api.sendgrid.com")
+            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
+            .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .build();
+        
         for (String email : emails) {
             try {
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom(fromEmail);
-                message.setTo(email);
-                message.setSubject(asunto);
-                message.setText(mensaje);
+                // Construir payload para cada email
+                Map<String, Object> payload = new HashMap<>();
+                Map<String, String> fromMap = new HashMap<>();
+                fromMap.put("email", fromEmail);
+                payload.put("from", fromMap);
                 
-                mailSender.send(message);
+                Map<String, String> toMap = new HashMap<>();
+                toMap.put("email", email);
+                payload.put("personalizations", new Object[]{
+                    Map.of("to", new Object[]{toMap})
+                });
+                
+                payload.put("subject", asunto);
+                
+                Map<String, String> contentMap = new HashMap<>();
+                contentMap.put("type", "text/plain");
+                contentMap.put("value", mensaje);
+                payload.put("content", new Object[]{contentMap});
+                
+                // Enviar email
+                webClient.post()
+                    .uri("/v3/mail/send")
+                    .bodyValue(payload)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+                
                 enviados++;
-                logger.info("Email masivo enviado a: {}", email);
+                logger.info("✅ Email masivo enviado a: {}", email);
                 
-            } catch (MailException e) {
-                // Reutilizar el método de manejo de errores
-                String errorMessage = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-                String fullMessage = e.getMessage() != null ? e.getMessage() : "Error desconocido";
-                
-                boolean isTimeout = errorMessage.contains("timeout") ||
-                                   errorMessage.contains("connect timed out") ||
-                                   errorMessage.contains("couldn't connect to host");
-                
-                if (isTimeout) {
-                    logger.error("❌ ERROR: Timeout de conexión SMTP al enviar email masivo a {}. Detalle: {}", email, fullMessage);
-                } else {
-                    logger.error("❌ ERROR: Error al enviar email masivo a {}. Detalle: {}", email, fullMessage);
-                }
+            } catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+                logger.error("❌ ERROR: SendGrid API retornó código de error {} al enviar email masivo a {}. Respuesta: {}", 
+                           e.getStatusCode().value(), email, e.getResponseBodyAsString());
             } catch (Exception e) {
-                logger.error("Error inesperado al enviar email masivo a {}: {}", email, e.getMessage());
+                logger.error("❌ ERROR: Error inesperado al enviar email masivo a {}: {}", email, e.getMessage());
             }
         }
         
