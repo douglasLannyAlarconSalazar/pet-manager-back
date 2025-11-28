@@ -256,13 +256,10 @@ public class NotificacionService {
             int fin = Math.min(i + TAMANO_LOTE, idsNotificaciones.size());
             List<Long> lote = idsNotificaciones.subList(i, fin);
             
-            try {
-                procesarLoteEmails(lote);
-                enviados += lote.size();
-            } catch (Exception e) {
-                logger.error("Error al procesar lote de emails: {}", e.getMessage());
-                fallidos += lote.size();
-            }
+            // Procesar lote y obtener conteo real de enviados/fallidos
+            int[] resultado = procesarLoteEmails(lote);
+            enviados += resultado[0];
+            fallidos += resultado[1];
         }
         
         logger.info("Procesamiento de emails completado. Enviados: {}, Fallidos: {}", enviados, fallidos);
@@ -271,8 +268,12 @@ public class NotificacionService {
     /**
      * Procesa un lote de emails
      * El envío de email se hace FUERA de la transacción, y luego se actualiza el estado en una transacción rápida
+     * @return array con [enviados, fallidos]
      */
-    public void procesarLoteEmails(List<Long> idsNotificaciones) {
+    public int[] procesarLoteEmails(List<Long> idsNotificaciones) {
+        int enviados = 0;
+        int fallidos = 0;
+        
         for (Long idNotificacion : idsNotificaciones) {
             try {
                 // Primero enviar el email FUERA de cualquier transacción
@@ -283,21 +284,36 @@ public class NotificacionService {
                     notificacionParaEnvio = obtenerNotificacionParaEnvio(idNotificacion);
                     if (notificacionParaEnvio != null) {
                         enviado = emailService.enviarEmail(notificacionParaEnvio);
+                    } else {
+                        logger.warn("Notificación {} no encontrada para envío", idNotificacion);
+                        fallidos++;
+                        actualizarEstadoNotificacion(idNotificacion, false);
+                        continue;
                     }
                 } catch (Exception e) {
                     logger.error("Error al enviar email para notificación {}: {}", 
                                idNotificacion, e.getMessage());
+                    enviado = false;
                 }
                 
                 // Luego actualizar el estado en una transacción rápida y separada
                 actualizarEstadoNotificacion(idNotificacion, enviado);
                 
+                if (enviado) {
+                    enviados++;
+                } else {
+                    fallidos++;
+                }
+                
             } catch (Exception e) {
                 logger.error("Error al procesar email para notificación {}: {}", 
                            idNotificacion, e.getMessage());
                 actualizarEstadoNotificacion(idNotificacion, false);
+                fallidos++;
             }
         }
+        
+        return new int[]{enviados, fallidos};
     }
     
     /**
