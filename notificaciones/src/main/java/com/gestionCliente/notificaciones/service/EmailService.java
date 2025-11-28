@@ -20,12 +20,31 @@ public class EmailService {
     @Autowired
     private JavaMailSender mailSender;
     
+    @Autowired
+    private org.springframework.core.env.Environment environment;
+    
     /**
      * Envía un email de promoción
      */
     public boolean enviarEmail(Notificacion notificacion) {
         try {
+            // Obtener configuración SMTP
+            String mailHost = environment.getProperty("spring.mail.host", "no configurado");
+            String mailPort = environment.getProperty("spring.mail.port", "no configurado");
+            String fromEmail = environment.getProperty("spring.mail.from");
+            
+            // Validar que el remitente esté configurado
+            if (fromEmail == null || fromEmail.isEmpty()) {
+                logger.error("❌ MAIL_FROM no está configurado. Por favor, configura la variable de entorno MAIL_FROM con el email verificado en SendGrid");
+                return false;
+            }
+            
+            // Log de configuración para diagnóstico
+            logger.info("📧 Enviando email - SMTP: {}:{}, From: {}", mailHost, mailPort, fromEmail);
+            
             SimpleMailMessage message = new SimpleMailMessage();
+            // Configurar remitente (debe ser un email verificado en SendGrid)
+            message.setFrom(fromEmail);
             message.setTo(notificacion.getCliente().getEmail());
             message.setSubject("🎉 " + notificacion.getPromocion().getNombre());
             message.setText(construirMensajeEmail(notificacion));
@@ -146,9 +165,17 @@ public class EmailService {
     public int enviarEmailMasivo(String[] emails, String asunto, String mensaje) {
         int enviados = 0;
         
+        String fromEmail = environment.getProperty("spring.mail.from");
+        
+        if (fromEmail == null || fromEmail.isEmpty()) {
+            logger.error("❌ MAIL_FROM no está configurado. No se pueden enviar emails masivos.");
+            return 0;
+        }
+        
         for (String email : emails) {
             try {
                 SimpleMailMessage message = new SimpleMailMessage();
+                message.setFrom(fromEmail);
                 message.setTo(email);
                 message.setSubject(asunto);
                 message.setText(mensaje);
