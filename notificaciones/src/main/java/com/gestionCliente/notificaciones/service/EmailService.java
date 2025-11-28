@@ -85,6 +85,7 @@ public class EmailService {
     private boolean manejarErrorMail(MailException e, String email) {
         Throwable cause = e.getCause();
         String errorMessage = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+        String fullMessage = e.getMessage() != null ? e.getMessage() : "Error desconocido";
         
         boolean isTimeout = cause instanceof SocketTimeoutException || 
                            cause instanceof ConnectException ||
@@ -94,11 +95,18 @@ public class EmailService {
                            errorMessage.contains("mail server connection failed");
         
         if (isTimeout) {
-            // Log a nivel WARN para timeouts (menos ruido que ERROR)
-            logger.warn("Timeout de conexión SMTP al enviar email a {} (esto es esperado si el servidor SMTP no es accesible)", email);
+            // Timeouts son errores reales en producción
+            logger.error("❌ ERROR: Timeout de conexión SMTP al enviar email a {}. Verifica: 1) Variables de entorno (MAIL_HOST, MAIL_PORT), 2) Conectividad de red, 3) Configuración del servidor SMTP. Detalle: {}", 
+                       email, fullMessage);
+        } else if (errorMessage.contains("authentication failed") || errorMessage.contains("authentication")) {
+            logger.error("❌ ERROR: Fallo de autenticación SMTP al enviar email a {}. Verifica: 1) MAIL_USERNAME y MAIL_PASSWORD correctos, 2) API Key válida en SendGrid. Detalle: {}", 
+                       email, fullMessage);
+        } else if (errorMessage.contains("sender identity") || errorMessage.contains("verified sender")) {
+            logger.error("❌ ERROR: El remitente no está verificado en SendGrid. Email: {}. Verifica que MAIL_FROM coincida exactamente con un Sender Identity verificado en SendGrid. Detalle: {}", 
+                       email, fullMessage);
         } else {
             // Otros errores de mail se loguean como ERROR
-            logger.error("Error de conexión SMTP al enviar email a {}: {}", email, e.getMessage());
+            logger.error("❌ ERROR: Error de conexión SMTP al enviar email a {}. Detalle: {}", email, fullMessage);
         }
         return false;
     }
@@ -108,15 +116,17 @@ public class EmailService {
      */
     private boolean manejarErrorMailGenerico(Exception e, String email) {
         String errorMessage = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+        String fullMessage = e.getMessage() != null ? e.getMessage() : "Error desconocido";
         
         boolean isTimeout = errorMessage.contains("timeout") ||
                            errorMessage.contains("connect timed out") ||
                            errorMessage.contains("couldn't connect to host");
         
         if (isTimeout) {
-            logger.warn("Timeout de conexión SMTP al enviar email a {} (esto es esperado si el servidor SMTP no es accesible)", email);
+            logger.error("❌ ERROR: Timeout de conexión SMTP al enviar email a {}. Verifica la configuración SMTP y conectividad de red. Detalle: {}", 
+                       email, fullMessage);
         } else {
-            logger.warn("Error de conexión SMTP al enviar email a {}: {}", email, e.getMessage());
+            logger.error("❌ ERROR: Error de conexión SMTP al enviar email a {}. Detalle: {}", email, fullMessage);
         }
         return false;
     }
@@ -185,20 +195,18 @@ public class EmailService {
                 logger.info("Email masivo enviado a: {}", email);
                 
             } catch (MailException e) {
-                // Verificar si es un timeout de conexión
-                Throwable cause = e.getCause();
+                // Reutilizar el método de manejo de errores
                 String errorMessage = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+                String fullMessage = e.getMessage() != null ? e.getMessage() : "Error desconocido";
                 
-                boolean isTimeout = cause instanceof SocketTimeoutException || 
-                                   cause instanceof ConnectException ||
-                                   errorMessage.contains("timeout") ||
+                boolean isTimeout = errorMessage.contains("timeout") ||
                                    errorMessage.contains("connect timed out") ||
                                    errorMessage.contains("couldn't connect to host");
                 
                 if (isTimeout) {
-                    logger.warn("Timeout de conexión SMTP al enviar email masivo a {}", email);
+                    logger.error("❌ ERROR: Timeout de conexión SMTP al enviar email masivo a {}. Detalle: {}", email, fullMessage);
                 } else {
-                    logger.error("Error al enviar email masivo a {}: {}", email, e.getMessage());
+                    logger.error("❌ ERROR: Error al enviar email masivo a {}. Detalle: {}", email, fullMessage);
                 }
             } catch (Exception e) {
                 logger.error("Error inesperado al enviar email masivo a {}: {}", email, e.getMessage());
